@@ -1,0 +1,245 @@
+name: Build
+
+on:
+  push:
+    branches: # release/env/app-1|app-2|app-3|apps
+      - build/*/app-1
+      - build/*/app-2
+      - build/*/app-3
+      - build/*/apps
+
+env:
+  REGISTRY_HOSTNAME: ghcr.io
+  DOCKER_FILE: Dockerfile
+  KUSTOMISE_DIRECTORY: k8s/app-nodejs
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setting Environment Variables
+        run: |
+          RELEASE_ENV=$(echo ${GITHUB_REF} | cut -d / -f4)
+          echo ::set-output name=RELEASE_ENV::${RELEASE_ENV}
+          MODULE=$(echo ${GITHUB_REF} | cut -d / -f5)
+          echo ::set-output name=MODULE::${MODULE}
+          OWNER_NAME=$(echo ${GITHUB_REPOSITORY} | cut -d / -f1)
+          echo ::set-output name=OWNER_NAME::$(echo ${GITHUB_REPOSITORY} | cut -d / -f1)
+          REPO_NAME=$(echo ${GITHUB_REPOSITORY} | cut -d / -f2)
+          echo ::set-output name=REPO_NAME::$(echo ${GITHUB_REPOSITORY} | cut -d / -f2)
+          echo ::set-output name=GIT_SHA_SHORT::GIT-${GITHUB_SHA::7}
+          echo ::set-output name=IMAGE::${REGISTRY_HOSTNAME}/${OWNER_NAME}/${REPO_NAME}/${MODULE}
+          echo ::set-output name=DOCKER_REPO::${REGISTRY_HOSTNAME}/${OWNER_NAME}/${REPO_NAME}
+          echo ::set-output name=APP_COMMIT_MSG::$(git log --format=%B -n 1 ${{ github.event.after }})
+          if [[ "${RELEASE_ENV}" == "mainnet" ]]; then
+            echo ::set-output name=ARGO_URL::https://argo.mainnet.mcs.best/
+          else
+            echo ::set-output name=ARGO_URL::https://argo.lab.mcs.best/
+          fi
+        id: genv
+
+      - name: Print Env
+        run: |
+          echo GITHUB_REF = ${GITHUB_REF}
+          echo GITHUB_REPOSITORY = ${GITHUB_REPOSITORY}
+          echo OWNER_NAME = "${{ steps.genv.outputs.OWNER_NAME }}"
+          echo REPO_NAME = "${{ steps.genv.outputs.REPO_NAME }}"
+          echo GIT_SHA_SHORT = "${{ steps.genv.outputs.GIT_SHA_SHORT }}"
+          echo MODULE = "${{ steps.genv.outputs.MODULE }}"
+          echo IMAGE = "${{ steps.genv.outputs.IMAGE }}"
+          echo APP_COMMIT_MSG = "${{ steps.genv.outputs.APP_COMMIT_MSG }}"
+          echo DOCKER_REPO = "${{ steps.genv.outputs.DOCKER_REPO }}"
+          echo FOOTER_MSG = "${{ steps.genv.outputs.FOOTER_MGS }}"
+          echo RELEASE_ENV = "${{ steps.genv.outputs.RELEASE_ENV }}"
+          echo ARGO_URL = "${{ steps.genv.outputs.ARGO_URL }}"
+
+      - name: Docker Login
+        run: echo "${{ secrets.GIT_SECRET }}" | docker login "${REGISTRY_HOSTNAME}" -u ${{ github.actor }} --password-stdin
+
+      - name: '[(ALL)] Docker Build'
+        if: ${{ steps.genv.outputs.MODULE == 'caster-servers' }}
+        run: |
+          index=0
+          BUILD_PROC_PATHS=(apps/app1 apps/app2 apps/app3)
+          for MODULE in app1 app2 app3
+          do
+            let "count=index+1"
+            echo ""
+            echo "##### ##### ##### ##### ##### ##### ##### #####"
+            echo "##### [${count}] docker build ${MODULE} #####"
+            echo "##### ##### ##### ##### ##### ##### ##### #####"
+            IMAGE=${{ steps.genv.outputs.DOCKER_REPO }}/${MODULE}
+            BUILD_PROC_PATH=${BUILD_PROC_PATHS[index]}
+            echo "IMAGE=${IMAGE} BUILD_PROC_PATH=${BUILD_PROC_PATH}"
+          	docker build -f ${DOCKER_FILE} -t ${IMAGE}:${{ steps.genv.outputs.GIT_SHA_SHORT }} . --build-arg BUILD_PROC_PATH=${BUILD_PROC_PATH}
+            docker push ${IMAGE}:${{ steps.genv.outputs.GIT_SHA_SHORT }}
+            let "index=index+1"
+          done
+
+      - name: '[app1] Docker Build'
+        if: ${{ steps.genv.outputs.MODULE == 'app1' }}
+        run: |
+          docker build -f $DOCKER_FILE -t ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }} . --build-arg BUILD_PROC_PATH=apps/app1
+          docker push ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }}
+          docker images
+
+      - name: '[app2] Docker Build'
+        if: ${{ steps.genv.outputs.MODULE == 'app2' }}
+        run: |
+          docker build -f $DOCKER_FILE -t ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }} . --build-arg BUILD_PROC_PATH=apps/app2
+          docker push ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }}
+          docker images
+
+      - name: '[app3] Docker Build'
+        if: ${{ steps.genv.outputs.MODULE == 'app3' }}
+        run: |
+          docker build -f $DOCKER_FILE -t ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }} . --build-arg BUILD_PROC_PATH=apps/app3
+          docker push ${{ steps.genv.outputs.IMAGE }}:${{ steps.genv.outputs.GIT_SHA_SHORT }}
+          docker images
+
+      # Variable sharing between Jobs
+      - run: echo "${{ steps.genv.outputs.GIT_SHA_SHORT }}" > GIT_SHA_SHORT
+      - uses: actions/upload-artifact@master
+        with:
+          name: GIT_SHA_SHORT
+          path: GIT_SHA_SHORT
+
+      - run: echo "${{ steps.genv.outputs.RELEASE_ENV }}" > RELEASE_ENV
+      - uses: actions/upload-artifact@master
+        with:
+          name: RELEASE_ENV
+          path: RELEASE_ENV
+      - run: echo "${{ steps.genv.outputs.APP_COMMIT_MSG }}" > APP_COMMIT_MSG
+      - uses: actions/upload-artifact@master
+        with:
+          name: APP_COMMIT_MSG
+          path: APP_COMMIT_MSG
+      - run: echo "${{ steps.genv.outputs.ARGO_URL }}" > ARGO_URL
+      - uses: actions/upload-artifact@master
+        with:
+          name: ARGO_URL
+          path: ARGO_URL
+      - run: echo "${{ steps.genv.outputs.MODULE }}" > MODULE
+      - uses: actions/upload-artifact@master
+        with:
+          name: MODULE
+          path: MODULE
+
+      - name: Slack Notification Failure
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@master
+        env:
+          SLACK_USERNAME: 'Ci-B0t'
+          SLACK_TITLE: 'Build Failed!!'
+          SLACK_COLOR: F63B13
+          SLACK_ICON_EMOJI: github_flip
+          SLACK_FOOTER: '© 2022 luckypenny, Inc.'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+  push-cradle-devops:
+    needs: build
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          repository: mcsbest/cradle-devops
+          ref: argo
+          token: ${{ secrets.git_secret }}
+
+      - uses: actions/download-artifact@master
+        with:
+          name: GIT_SHA_SHORT
+      - uses: actions/download-artifact@master
+        with:
+          name: RELEASE_ENV
+      - uses: actions/download-artifact@master
+        with:
+          name: APP_COMMIT_MSG
+      - uses: actions/download-artifact@master
+        with:
+          name: ARGO_URL
+      - uses: actions/download-artifact@master
+        with:
+          name: MODULE
+
+      - name: SETUP_GLOBAL_DATA
+        id: global-data
+        run: |
+          echo ::set-output name=GIT_SHA_SHORT::$(cat GIT_SHA_SHORT)
+          echo ::set-output name=RELEASE_ENV::$(cat RELEASE_ENV)
+          echo ::set-output name=APP_COMMIT_MSG::$(cat APP_COMMIT_MSG)
+          echo ::set-output name=ARGO_URL::$(cat ARGO_URL)
+          echo ::set-output name=MODULE::$(cat MODULE)
+          rm -rf GIT_SHA_SHORT RELEASE_ENV APP_COMMIT_MSG ARGO_URL MODULE
+
+      - name: uppercase string
+        id: string
+        uses: ASzc/change-string-case-action@v2
+        with:
+          string: ${{ steps.global-data.outputs.MODULE }}
+
+      - name: DevOps Repo Commit and Push
+        run: |
+          # Cradle DevOps Commit and Push
+          git config --global user.email "@luckypenny.io"
+          git config --global user.name ${GITHUB_ACTOR}
+
+          # Release 환경 변수 설정 ( k8s-gitops directory name과 바인딩 )
+          echo "Module ==> ${MODULE}"
+
+          MODULES=${MODULE}
+          if [[ "${MODULE}" == "all" ]]; then
+            MODULES="app1 app2 app3"
+          fi
+          echo "Modules ==> ${RELEASE_ENV} ${MODULES}"
+
+          for MODULE in ${MODULES}
+          do
+            echo "#### ${RELEASE_ENV}-${MODULE} ####"
+            case ${RELEASE_ENV} in
+              staging|prod) OVERAY_DIR=$RELEASE_ENV;
+                # k8s/app-nodejs/app1
+                sed -i "s/newTag:.*/newTag: ${GIT_SHA_SHORT}/g" ${KUSTOMISE_DIRECTORY}/${MODULE}/overlays/${OVERAY_DIR}/kustomization.yaml
+              ;;
+              *) echo "MCS::[$RELEASE_ENV] 환경은 쿠버네티스에 존재하지 않습니다."; exit -1;;
+            esac
+          done
+
+          # 코드 커밋 및 푸쉬
+          git commit -am "[${UPPER_MODULE}] [${GIT_SHA_SHORT}] ${APP_COMMIT_MSG}"
+          git pull origin argo --no-edit --no-rebase
+          git push origin argo
+
+        env:
+          GIT_SHA_SHORT: ${{ steps.global-data.outputs.GIT_SHA_SHORT }}
+          RELEASE_ENV: ${{ steps.global-data.outputs.RELEASE_ENV }}
+          APP_COMMIT_MSG: ${{ steps.global-data.outputs.APP_COMMIT_MSG }}
+          MODULE: ${{ steps.global-data.outputs.MODULE }}
+          UPPER_MODULE: ${{ steps.string.outputs.uppercase }}
+
+      - name: Slack Notification Success
+        if: ${{ success() }}
+        uses: rtCamp/action-slack-notify@master
+        env:
+          SLACK_USERNAME: 'Ci-B0t'
+          SLACK_TITLE: '[ Caster-Server ] Commit Message :rocket:'
+          SLACK_MESSAGE: "${{ steps.global-data.outputs.APP_COMMIT_MSG }}\n\n
+            [환경] `${{ steps.global-data.outputs.RELEASE_ENV }}` [모듈] `${{ steps.global-data.outputs.MODULE }}` [태그] `${{ steps.global-data.outputs.GIT_SHA_SHORT }}`\n
+            [배포] ${{ steps.global-data.outputs.ARGO_URL }}"
+          SLACK_ICON_EMOJI: github_flip
+          SLACK_FOOTER: '© 2022 luckypenny, Inc.'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+
+      - name: Slack Notification Failure
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@master
+        env:
+          SLACK_USERNAME: 'Ci-B0t'
+          SLACK_TITLE: 'Cradle-DevOps Repo에 이미지 태그가 반영 되지 않았습니다. Rerun-Job을 실행하거나 DevOps 팀에 문의 하세요.'
+          SLACK_MESSAGE: ''
+          SLACK_COLOR: DD86F9
+          SLACK_ICON_EMOJI: github_flip
+          SLACK_FOOTER: '© 2022 luckypenny, Inc.'
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
