@@ -19,4 +19,4 @@
 ### update-build-image-tag (DevOps Build)
 - 설정된 파드의 디렉토리를 찾습니다. 
 - 이미지 커밋 번호를 sed로 치환합니다.  
-- 키밋 및 푸쉬 합니다.
+- Argo 브랜치에 커밋 & 푸쉬 합니다.
